@@ -326,7 +326,7 @@ if ! [ -d "cinder" ]; then
     pushd cinder
     git checkout "${CINDER_COMMIT}"
     mkdir -p cinder-build
-    ./configure --prefix="$(pwd)/cinder-build" --enable-profiling --enable-optimizations --enable-shared LN="ln -s"
+    ./configure --prefix="$(pwd)/cinder-build" --enable-optimizations --enable-shared LN="ln -s"
     make -j"${NUM_BUILD_JOBS}"
     make install
     popd

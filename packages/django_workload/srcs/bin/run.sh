@@ -1,4 +1,5 @@
 #!/bin/bash
+set -x
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under the MIT license found in the
@@ -490,7 +491,7 @@ start_thrift_servers() {
     export NUM_SERVERS
   fi
   cd "${SCRIPT_ROOT}/../django-workload/django-workload/django_workload/thrift" || exit 1
-  bash manage_servers.sh start --with-haproxy
+  taskset -c 0-5 bash manage_servers.sh start --with-haproxy
 
   # Wait for Thrift servers to start
   wait_for_thrift_servers_to_start
@@ -517,7 +518,7 @@ start_cassandra() {
   mv -f "${CASSANDRA_YAML}.tmp2" "${CASSANDRA_YAML}"
 
   # Start Cassandra in the background and capture its PID
-  ./apache-cassandra/bin/cassandra -R -f > cassandra.log 2>&1 &
+  taskset -c 0-5 ./apache-cassandra/bin/cassandra -R -f > cassandra.log 2>&1 &
   CASSANDRA_PID=$!
 
   # Write PID to file for cleanup() function
@@ -552,7 +553,27 @@ start_django_server() {
 
   # Start Memcached
   cd "${SCRIPT_ROOT}/.." || exit 1
-  ./django-workload/services/memcached/run-memcached > memcached.log 2>&1 &
+  #./django-workload/services/memcached/run-memcached > memcached.log 2>&1 &
+
+  # 5GB
+  MEMORY="${MEMORY:-5120}"
+
+  # Network config
+  LISTEN="${LISTEN:-0.0.0.0}"
+  PORT="${PORT:-11811}"
+
+  # User to run under
+  USER="${USER:-memcache}"
+
+  # Scale threads to match uWSGI worker count (1 worker = 1 connection).
+  # V2 architecture uses per-worker ports, so each worker has an independent
+  # memcached connection. Default memcached -t 16 is insufficient when
+  # num_workers >> 16 (e.g., 176 on T1_BGM).
+  NPROC=$(nproc)
+  THREADS=$((NPROC > 16 ? NPROC / 2 : 16))
+  MAXCONNS=$((NPROC * 60))
+
+  /usr/bin/memcached -u "$USER" -m "$MEMORY" -l "$LISTEN" -p "$PORT" -t "$THREADS" -c "$MAXCONNS" > memcached.log 2>&1 &
 
   MEMCACHED_PID=$!
   echo "$MEMCACHED_PID" > memcached.pid
@@ -813,10 +834,12 @@ start_clientserver() {
 
 main() {
   local num_server_workers
-  num_server_workers="$(nproc)"
+  #num_server_workers="$(nproc)"
+  num_server_workers=12
 
   local num_client_workers
-  num_client_workers="0"
+  #num_client_workers="0"
+  num_client_workers=60
 
   local num_cassandra_writes
   num_cassandra_writes="128"
@@ -878,7 +901,8 @@ main() {
   local thrift_server_workers
   # 0 = auto: start one thrift server worker per logical CPU (nproc), resolved
   # in start_thrift_servers(). Override with --thrift-server-workers N.
-  thrift_server_workers=0
+  #thrift_server_workers=0
+  thrift_server_workers=6
 
   local cassandra_heap
   cassandra_heap=
